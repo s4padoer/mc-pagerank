@@ -16,7 +16,7 @@ class fastppr:
         self.n_vertex = len(self.vertices)
         self.jump = jump
         self.neighbours = None
-        
+    
     def get_neighbours(self):
         neigh = {}
         rev_neigh = {} # reverse neighbour
@@ -25,7 +25,7 @@ class fastppr:
             rev_neigh[v] = self.edges[np.where(self.edges[:,1] == v)[0],0]
         self.neighbours = neigh
         self.reverse_neighbours = rev_neigh
-
+    
     def first_walk(self, R, max_length = 100, seed = 0):
         self.column_names = ["Start", "Path" , "Step", "Nr_walk" ]
         if self.neighbours is None:
@@ -52,20 +52,23 @@ class fastppr:
                         walking = False
                 lp = len(path)
                 df = np.column_stack( (np.full(lp,v), path, np.arange(lp), np.full(lp,r)) )
-
+                
                 rw = np.concatenate((rw, df), axis = 0)
         self.current_walks = rw
         self.walk_update_necessary = False
-        
+    
     # Create random walk from specific node
     def random_walk(self, node, max_length):
         # Create a random walk from a specific node:
         niter = 0
-        path = [node]
+        path = [int(node)]
         walking = True
         while walking:
-            nghb = self.neighbours[path[-1]]
+            nghb = self.neighbours.get(path[-1])
             if len(nghb) == 0:
+                break
+            elif nghb is None:
+                path = []
                 break
             nxt = nghb[random.randint(0,len(nghb)-1)]
             path.append(nxt)
@@ -128,22 +131,22 @@ class fastppr:
         edges = [ np.column_stack(([x]*len(y),y.tolist()) ) for x,y in self.neighbours.items()]    
         edges = np.row_stack(edges)
         self.edges = edges
-        
-
+    
+    
     # deleting node x would then be [x,x] as a row in deletions (in addition )
     # indicating new nodes x is indicated using [x,x] as a row in newedges
     def update_walk(self, R, max_length, newedges = None, deletions = None, seed = 0):
         if self.walk_update_necessary == False:
             self.update_nodes(newedges, deletions)
-        relevant_nodes = np.concatenate((self.deleted_nodes, self.nodes_with_changed_arcs))
+        relevant_nodes = np.unique( np.concatenate((self.deleted_nodes, self.nodes_with_changed_arcs)) )
         # remove the outdated parts:
-        updated_walks = self.current_walks
+        updated_walks = self.current_walks.copy()
         outdated_walks = np.zeros((0,4))
         for x in relevant_nodes:
             inds = updated_walks[:,1] == x
             dels = updated_walks[inds,:].copy()
             dels = dels[dels[:, 2].argsort(),:]
-            dels = dels[np.unique(dels[:, [0,3]], return_index=True, axis = 1)[1]]
+            dels = dels[ np.unique([ str(int(x))+"-"+str(int(y) )for x,y in zip(dels[:,0], dels[:,3])], return_index = True)[1]]
             for i in range(len(dels[:,0])):
                 y = dels[i,:]
                 inds2 = (updated_walks[:,3] == y[3]) & \
@@ -154,7 +157,7 @@ class fastppr:
         
         outdated_walks = outdated_walks[list(map(lambda x: x not in self.deleted_nodes, outdated_walks[:,0]))]
         outdated_walks = outdated_walks[np.lexsort((outdated_walks[:,0], outdated_walks[:,3], outdated_walks[:,2])),:]
-        outdated_walks = outdated_walks[np.unique(outdated_walks[:,[0,3]], return_index = True, axis = 1)[1],:]
+        outdated_walks = outdated_walks[np.unique([ str(int(x))+"-"+str(int(y) )for x,y in zip(outdated_walks[:,0], outdated_walks[:,3])], return_index = True)[1],:]
         # Create R random walks if a new node has been added:
         for v in self.created_nodes:
             for r in range(R):
@@ -162,17 +165,17 @@ class fastppr:
                 lp = len(path)
                 df = np.column_stack((np.full(lp,v), path, np.arange(lp), np.full(lp,r))) 
                 updated_walks = np.concatenate((updated_walks, df), axis = 0)
-
+        
         # Now: Update the partially outdated walks:
         for i in range(len(outdated_walks[:,0])):
-            path = self.random_walk(outdated_walks[i,1], max_length)
+            path = self.random_walk(int(outdated_walks[i,1]), max_length)
             lp = len(path)
             df = np.column_stack((np.full(lp,outdated_walks[i,0]), path, np.arange(outdated_walks[i,2], outdated_walks[i,2] + lp),
                                   np.full( lp,outdated_walks[i,3])) )
             updated_walks = np.concatenate((updated_walks, df), axis = 0)
         self.current_walks = updated_walks
         self.walk_update_necessary = False
-        
+    
     def get_stationary_distribution(self):
         out = self.current_walks
         out = out[np.lexsort((-out[:,2], out[:,3], out[:,0])),:]
@@ -187,10 +190,10 @@ class fastppr:
                 x = df[0][j]
                 count = df[1][j]
                 probs[x] = probs[x] + [count/lens[i]]
-                
+        
         probs = [sum(x)/len(self.vertices) for x in probs.values()]
         self.stationary_dist = probs
-            
+
 if __name__ == "__main__":
     G = nx.gnc_graph(30, seed = 2)
     edgelist = np.row_stack( G.edges )
@@ -204,8 +207,8 @@ if __name__ == "__main__":
     node = np.argmax(fpr.stationary_dist)
     dels = edgelist[(edgelist[:,0]==node)|(edgelist[:,1]==node),:]
     fpr.update_graph(deletions = np.row_stack( ([node,node], dels) ) )
-    
     fpr.update_walk(R=100, max_length=10, deletions = dels)
     fpr.get_stationary_distribution()
-    G_new = nx.from_edgelist( fpr.edges )   
+    G_new = nx.from_edgelist( fpr.edges.astype(int) )   
+    G_new.add_node(26)
     nx.draw(G_new, with_labels = True, node_color = fpr.stationary_dist)
